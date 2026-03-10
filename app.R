@@ -890,6 +890,7 @@ server <- function(input, output, session) {
       ggplot(plot_data, aes(Date, Value, color = Metric)) +
         geom_line(linewidth = 1) +
         geom_point(size = 2) +
+        geom_smooth(method = 'lm', color = 'black') +
         theme_minimal() +
         labs(title = "Metrics Over Time",
              x = "Date",
