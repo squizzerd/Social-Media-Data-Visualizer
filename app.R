@@ -68,10 +68,7 @@ ui <- fluidPage(
       hr(),
       
       # Tag filtering dropdown
-      selectInput("tag_types", 
-                  "Choose Tags:",
-                  choices = c("All Tags"),
-                  selected = "All Tags"),
+      uiOutput("tag_selector"),
       
       hr(),
       
@@ -269,11 +266,17 @@ server <- function(input, output, session) {
   # Options change based on selected network
   # --------------------------------------------------------------------------
   output$post_type_selector <- renderUI({
-    req(input$selected_network)
+    req(raw_data())
     
-    if (input$selected_network == "All networks") {
+    # Default to "All networks" if input not ready yet
+    selected_network <- if (is.null(input$selected_network)) {
+      "All networks"
+    } else {
+      input$selected_network
+    }
+    
+    if (selected_network == "All networks") {
       # If all networks, show all unique post types from data
-      req(raw_data())
       all_types <- unique(raw_data()$Post.Type) %>% 
         na.omit() %>% 
         sort()
@@ -284,7 +287,7 @@ server <- function(input, output, session) {
                          selected = all_types)
     } else {
       # Show network-specific post types
-      config <- network_config[[input$selected_network]]
+      config <- network_config[[selected_network]]
       if (!is.null(config)) {
         checkboxGroupInput("post_type", 
                            "Post Types:",
@@ -292,9 +295,8 @@ server <- function(input, output, session) {
                            selected = config$post_types)
       } else {
         # Fallback if network not in config
-        req(raw_data())
         network_types <- raw_data() %>%
-          filter(Network == input$selected_network) %>%
+          filter(Network == selected_network) %>%
           pull(Post.Type) %>%
           unique() %>%
           na.omit() %>%
@@ -313,11 +315,17 @@ server <- function(input, output, session) {
   # Options change based on selected network
   # --------------------------------------------------------------------------
   output$content_type_selector <- renderUI({
-    req(input$selected_network)
+    req(raw_data())
     
-    if (input$selected_network == "All networks") {
+    # Default to "All networks" if input not ready yet
+    selected_network <- if (is.null(input$selected_network)) {
+      "All networks"
+    } else {
+      input$selected_network
+    }
+    
+    if (selected_network == "All networks") {
       # If all networks, show all unique content types from data
-      req(raw_data())
       all_types <- unique(raw_data()$Content.Type) %>% 
         na.omit() %>% 
         sort()
@@ -328,7 +336,7 @@ server <- function(input, output, session) {
                          selected = all_types)
     } else {
       # Show network-specific content types
-      config <- network_config[[input$selected_network]]
+      config <- network_config[[selected_network]]
       if (!is.null(config)) {
         checkboxGroupInput("content_type", 
                            "Content Types:",
@@ -336,9 +344,8 @@ server <- function(input, output, session) {
                            selected = config$content_types)
       } else {
         # Fallback if network not in config
-        req(raw_data())
         network_types <- raw_data() %>%
-          filter(Network == input$selected_network) %>%
+          filter(Network == selected_network) %>%
           pull(Content.Type) %>%
           unique() %>%
           na.omit() %>%
@@ -400,7 +407,7 @@ server <- function(input, output, session) {
                   "Max Impressions Filter:",
                   min = 0,
                   max = 100000,
-                  value = 80000)
+                  value = 100000)
     } else {
       req(raw_data())
       
@@ -408,11 +415,18 @@ server <- function(input, output, session) {
       max_val <- mean(raw_data()$Impressions, na.rm = TRUE) + 
         (2.5 * sd(raw_data()$Impressions, na.rm = TRUE))
       
+      # Make sure max_val is greater than 0 and not Inf
+      max_val <- max(c(max_val, max(raw_data()$Impressions, na.rm = TRUE)), na.rm = TRUE)
+      
+      if (is.infinite(max_val) || is.na(max_val) || max_val <= 0) {
+        max_val <- 100000
+      }
+      
       sliderInput("impressions_max", 
                   "Max Impressions Filter:",
                   min = 0,
                   max = ceiling(max_val),
-                  value = ceiling(max_val * 0.8))
+                  value = ceiling(max_val))
     }
   })
   
@@ -421,10 +435,8 @@ server <- function(input, output, session) {
   # Label and data source change based on toggle
   # --------------------------------------------------------------------------
   output$engagements_slider <- renderUI({
-    req(input$use_reactions)
-    
     # Determine label based on toggle
-    label <- if (input$use_reactions) {
+    label <- if (!is.null(input$use_reactions) && input$use_reactions) {
       "Max Reactions Filter:"
     } else {
       "Max Engagements Filter:"
@@ -435,12 +447,12 @@ server <- function(input, output, session) {
                   label,
                   min = 0,
                   max = 5000,
-                  value = 4000)
+                  value = 5000)
     } else {
       req(raw_data())
       
       # Use appropriate column based on toggle
-      if (input$use_reactions && "Reactions" %in% names(raw_data())) {
+      if (!is.null(input$use_reactions) && input$use_reactions && "Reactions" %in% names(raw_data())) {
         metric_col <- raw_data()$Reactions
       } else if ("Engagements" %in% names(raw_data())) {
         metric_col <- raw_data()$Engagements
@@ -450,18 +462,25 @@ server <- function(input, output, session) {
                            label,
                            min = 0,
                            max = 5000,
-                           value = 4000))
+                           value = 5000))
       }
       
       # Calculate reasonable max based on distribution
       max_val <- mean(metric_col, na.rm = TRUE) + 
         (2.5 * sd(metric_col, na.rm = TRUE))
       
+      # Make sure max_val is valid
+      max_val <- max(c(max_val, max(metric_col, na.rm = TRUE)), na.rm = TRUE)
+      
+      if (is.infinite(max_val) || is.na(max_val) || max_val <= 0) {
+        max_val <- 5000
+      }
+      
       sliderInput("engagements_max",
                   label,
                   min = 0,
                   max = ceiling(max_val),
-                  value = ceiling(max_val * 0.8))
+                  value = ceiling(max_val))
     }
   })
   
@@ -470,52 +489,60 @@ server <- function(input, output, session) {
   # Applies network, date, post type, content type, and metric filters
   # --------------------------------------------------------------------------
   filtered_data <- reactive({
-    req(raw_data(), input$impressions_max, input$engagements_max)
-    req(input$post_type, input$content_type)
+    req(raw_data())
     
     data <- raw_data()
     
-    # Filter by network
+    # Filter by network (only if input is ready and not "All networks")
     if (!is.null(input$selected_network) && 
         input$selected_network != "All networks") {
       data <- data %>%
         filter(Network == input$selected_network)
     }
     
-    # Determine which engagement metric to use
-    engagement_col <- if (input$use_reactions && "Reactions" %in% names(data)) {
-      "Reactions"
-    } else if ("Engagements" %in% names(data)) {
-      "Engagements"
-    } else {
-      NULL
-    }
-    
-    # Apply numeric filters
-    if (!is.null(engagement_col)) {
-      data <- data %>%
-        filter(Impressions <= input$impressions_max,
-               !!sym(engagement_col) <= input$engagements_max)
-    } else {
+    # Apply impressions filter (only if input exists)
+    if (!is.null(input$impressions_max)) {
       data <- data %>%
         filter(Impressions <= input$impressions_max)
     }
     
-    # Filter by post type
-    data <- data %>%
-      filter(Post.Type %in% input$post_type)
+    # Determine which engagement metric to use and apply filter
+    if (!is.null(input$engagements_max)) {
+      engagement_col <- if (!is.null(input$use_reactions) && 
+                            input$use_reactions && 
+                            "Reactions" %in% names(data)) {
+        "Reactions"
+      } else if ("Engagements" %in% names(data)) {
+        "Engagements"
+      } else {
+        NULL
+      }
+      
+      if (!is.null(engagement_col)) {
+        data <- data %>%
+          filter(!!sym(engagement_col) <= input$engagements_max)
+      }
+    }
     
-    # Filter by content type
-    data <- data %>%
-      filter(Content.Type %in% input$content_type)
+    # Filter by post type (only if input exists and has values)
+    if (!is.null(input$post_type) && length(input$post_type) > 0) {
+      data <- data %>%
+        filter(Post.Type %in% input$post_type)
+    }
     
-    # Apply date filter
-    if (!is.null(input$date_range)) {
+    # Filter by content type (only if input exists and has values)
+    if (!is.null(input$content_type) && length(input$content_type) > 0) {
+      data <- data %>%
+        filter(Content.Type %in% input$content_type)
+    }
+    
+    # Apply date filter (only if input exists)
+    if (!is.null(input$date_range) && length(input$date_range) == 2) {
       data <- data %>%
         filter(Date >= input$date_range[1] & Date <= input$date_range[2])
     }
     
-    # Apply tag filter if not "All Tags"
+    # Apply tag filter if not "All Tags" (only if input exists)
     if (!is.null(input$tag_types) && input$tag_types != "All Tags") {
       data <- data %>%
         filter(grepl(input$tag_types, Tags, fixed = TRUE))
@@ -524,7 +551,8 @@ server <- function(input, output, session) {
     # Apply link clicks filter if enabled
     if (!is.null(input$enable_link_clicks) && 
         input$enable_link_clicks && 
-        "Post.Link.Clicks" %in% names(data)) {
+        "Post.Link.Clicks" %in% names(data) &&
+        !is.null(input$link_clicks_min)) {
       data <- data %>%
         filter(Post.Link.Clicks >= input$link_clicks_min)
     }
@@ -544,7 +572,6 @@ server <- function(input, output, session) {
       
       # Handle cases where Tags column might be all NA or empty
       if (all(is.na(data$Tags) | data$Tags == "")) {
-        showNotification("No tags found in data", type = "warning", duration = 3)
         return(data)
       }
       
@@ -570,11 +597,6 @@ server <- function(input, output, session) {
         select(-tag_list, -max_tags)
       
     }, error = function(e) {
-      showNotification(
-        paste("Error processing tags:", e$message),
-        type = "warning",
-        duration = 5
-      )
       return(filtered_data())
     })
   })
@@ -609,24 +631,18 @@ server <- function(input, output, session) {
   })
   
   # --------------------------------------------------------------------------
-  # OBSERVER: Update tag dropdown when data changes
-  # Preserves user selection when possible
+  # OUTPUT: Tag selector dropdown
   # --------------------------------------------------------------------------
-  observe({
-    req(available_tags())
+  output$tag_selector <- renderUI({
+    tags_available <- available_tags()
     
-    current_selection <- isolate(input$tag_types)
-    new_choices <- c("All Tags", available_tags())
-    
-    # Only update selection if current selection is no longer valid
-    if (is.null(current_selection) || !current_selection %in% new_choices) {
-      updateSelectInput(session, "tag_types",
-                        choices = new_choices,
-                        selected = "All Tags")
+    if (length(tags_available) > 0) {
+      selectInput("tag_types", 
+                  "Choose Tags:",
+                  choices = c("All Tags", tags_available),
+                  selected = "All Tags")
     } else {
-      updateSelectInput(session, "tag_types",
-                        choices = new_choices,
-                        selected = current_selection)
+      p("No tags available", style = "color: #888; font-style: italic;")
     }
   })
   
@@ -637,17 +653,29 @@ server <- function(input, output, session) {
   output$scatter_plot <- renderPlot({
     req(filtered_data())
     
+    if (nrow(filtered_data()) == 0) {
+      plot.new()
+      text(0.5, 0.5, "No data matches current filters.\nTry adjusting your filter settings.", 
+           cex = 1.5, col = "red")
+      return()
+    }
+    
     # Determine Y-axis metric
-    y_metric <- if (input$use_reactions && "Reactions" %in% names(filtered_data())) {
+    y_metric <- if (!is.null(input$use_reactions) && 
+                    input$use_reactions && 
+                    "Reactions" %in% names(filtered_data())) {
       "Reactions"
     } else if ("Engagements" %in% names(filtered_data())) {
       "Engagements"
     } else {
-      return(plot.new())
+      plot.new()
+      text(0.5, 0.5, "No engagement metric available in data", cex = 1.5, col = "red")
+      return()
     }
     
     # Determine color variable (ensure it exists in data)
-    color_var <- if (input$color_by %in% names(filtered_data())) {
+    color_var <- if (!is.null(input$color_by) && 
+                     input$color_by %in% names(filtered_data())) {
       sym(input$color_by)
     } else {
       sym("Content.Type")
@@ -657,16 +685,23 @@ server <- function(input, output, session) {
     p <- ggplot(filtered_data(), 
                 aes(Impressions, !!sym(y_metric), color = !!color_var)) +
       geom_point(size = 3, alpha = 0.7) +
-      geom_smooth(method = "lm", se = TRUE) +
+      geom_smooth(method = "lm", se = TRUE, color = "black", linetype = "dashed") +
       theme_minimal() +
       labs(title = paste("Impressions vs", y_metric),
            x = "Impressions",
            y = y_metric) +
       theme(legend.position = "bottom",
-            plot.title = element_text(size = 16, face = "bold"))
+            plot.title = element_text(size = 16, face = "bold"),
+            legend.title = element_text(size = 12),
+            legend.text = element_text(size = 10))
     
     # Add marginal density plots
-    ggMarginal(p, type = "density", groupColour = TRUE, groupFill = TRUE)
+    tryCatch({
+      ggMarginal(p, type = "density", groupColour = TRUE, groupFill = TRUE)
+    }, error = function(e) {
+      # If marginal plots fail, return the base plot
+      print(p)
+    })
   })
   
   # --------------------------------------------------------------------------
@@ -681,7 +716,9 @@ server <- function(input, output, session) {
     }
     
     # Determine Y variable
-    y_metric <- if (input$use_reactions && "Reactions" %in% names(filtered_data())) {
+    y_metric <- if (!is.null(input$use_reactions) && 
+                    input$use_reactions && 
+                    "Reactions" %in% names(filtered_data())) {
       "Reactions"
     } else if ("Engagements" %in% names(filtered_data())) {
       "Engagements"
@@ -690,12 +727,16 @@ server <- function(input, output, session) {
     }
     
     # Build regression model
-    formula_str <- paste(y_metric, "~ Impressions")
-    model <- lm(as.formula(formula_str), data = filtered_data())
-    r_sqrd <- signif(summary(model)$r.squared, digits = 3)
-    
-    paste0("R-squared: ", r_sqrd, "\n",
-           "Number of observations: ", nrow(filtered_data()))
+    tryCatch({
+      formula_str <- paste(y_metric, "~ Impressions")
+      model <- lm(as.formula(formula_str), data = filtered_data())
+      r_sqrd <- signif(summary(model)$r.squared, digits = 3)
+      
+      paste0("R-squared: ", r_sqrd, "\n",
+             "Number of observations: ", nrow(filtered_data()))
+    }, error = function(e) {
+      paste("Error calculating R-squared:", e$message)
+    })
   })
   
   # --------------------------------------------------------------------------
@@ -711,9 +752,13 @@ server <- function(input, output, session) {
     
     existing_cols <- intersect(numeric_cols, names(filtered_data()))
     
-    filtered_data() %>%
-      select(all_of(existing_cols)) %>%
-      summary()
+    if (length(existing_cols) == 0) {
+      cat("No numeric columns available for summary")
+    } else {
+      filtered_data() %>%
+        select(all_of(existing_cols)) %>%
+        summary()
+    }
   })
   
   # --------------------------------------------------------------------------
@@ -796,7 +841,9 @@ server <- function(input, output, session) {
         return(datatable(data.frame(Message = "No tags found in data")))
       }
       
-      datatable(tag_data, options = list(pageLength = 20))
+      datatable(tag_data, 
+                options = list(pageLength = 20),
+                colnames = c("Tag", "Count"))
       
     }, error = function(e) {
       datatable(data.frame(Error = paste("Error processing tags:", e$message)))
@@ -818,7 +865,8 @@ server <- function(input, output, session) {
       }
       
       # Determine engagement metric
-      engagement_metric <- if (input$use_reactions && 
+      engagement_metric <- if (!is.null(input$use_reactions) && 
+                               input$use_reactions && 
                                "Reactions" %in% names(filtered_data())) {
         "Reactions"
       } else if ("Engagements" %in% names(filtered_data())) {
@@ -841,7 +889,7 @@ server <- function(input, output, session) {
       # Create line plot
       ggplot(plot_data, aes(Date, Value, color = Metric)) +
         geom_line(linewidth = 1) +
-        geom_point() +
+        geom_point(size = 2) +
         theme_minimal() +
         labs(title = "Metrics Over Time",
              x = "Date",
@@ -870,18 +918,23 @@ server <- function(input, output, session) {
       }
       
       # Determine engagement metric
-      engagement_metric <- if (input$use_reactions && 
+      engagement_metric <- if (!is.null(input$use_reactions) && 
+                               input$use_reactions && 
                                "Reactions" %in% names(filtered_data())) {
         "Reactions"
       } else if ("Engagements" %in% names(filtered_data())) {
         "Engagements"
       } else {
-        return(plot.new())
+        plot.new()
+        text(0.5, 0.5, "No engagement metric available", cex = 1.5)
+        return()
       }
       
       # Calculate engagement rate
       plot_data <- filtered_data() %>%
-        mutate(Engagement_Rate = (!!sym(engagement_metric) / Impressions) * 100)
+        mutate(Engagement_Rate = ifelse(Impressions > 0,
+                                        (!!sym(engagement_metric) / Impressions) * 100,
+                                        0))
       
       # Create line plot
       ggplot(plot_data, aes(Date, Engagement_Rate, color = Post.Type)) +
@@ -913,10 +966,6 @@ server <- function(input, output, session) {
                          start = min(data$Date, na.rm = TRUE),
                          end = max(data$Date, na.rm = TRUE))
     
-    # Reset tag filter
-    updateSelectInput(session, "tag_types",
-                      selected = "All Tags")
-    
     # Reset network selection
     updateSelectInput(session, "selected_network",
                       selected = "All networks")
@@ -928,6 +977,11 @@ server <- function(input, output, session) {
     if (!is.null(input$enable_link_clicks)) {
       updateCheckboxInput(session, "enable_link_clicks", value = FALSE)
     }
+    
+    # Reset color by
+    updateSelectInput(session, "color_by", selected = "Content.Type")
+    
+    showNotification("Filters reset to defaults", type = "message", duration = 2)
   })
 }
 
