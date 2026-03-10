@@ -305,13 +305,23 @@ server <- function(input, output, session) {
     })
   })
   
-  # Update tag dropdown when data changes
+  # Update tag dropdown when data changes (but preserve user selection)
   observe({
     req(available_tags())
     
-    updateSelectInput(session, "tag_types",
-                      choices = c("All Tags", available_tags()),
-                      selected = "All Tags")
+    current_selection <- isolate(input$tag_types)
+    new_choices <- c("All Tags", available_tags())
+    
+    # Only update selection if current selection is no longer valid
+    if (is.null(current_selection) || !current_selection %in% new_choices) {
+      updateSelectInput(session, "tag_types",
+                        choices = new_choices,
+                        selected = "All Tags")
+    } else {
+      updateSelectInput(session, "tag_types",
+                        choices = new_choices,
+                        selected = current_selection)
+    }
   })
   
   # Scatter plot
